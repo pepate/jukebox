@@ -1,0 +1,919 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Jukebox – Winterveranstaltung</title>
+<script>
+/* ==================================================================
+   PROGRAMM – hier Lieder, Pausen und Abstimmung pflegen.
+   Reihenfolge = Ablauf am Abend.
+     { typ:'intro', titel, untertitel }
+     { typ:'lied',  titel, chor }      oder  { typ:'lied', titel, solist }
+     { typ:'text',  titel, text }      (Übergangsseite, z.B. Pause / Danke)
+     { typ:'abstimmung', titel, frage, dauer (Sek.), stimmen, ergebnis:[{titel, prozent}] }
+   Bedienung: → / Leertaste / Klick = weiter · ← = zurück · F = Vollbild
+              M = Ton an/aus · H = Hilfe
+   ================================================================== */
+const TEMPO = 1.4;   // Geschwindigkeit der Jukebox-Mechanik (1 = gemütlich, 2 = flott)
+
+const PROGRAMM = [
+  { typ: 'intro', titel: 'Herzlich willkommen!', untertitel: 'Winterveranstaltung 2027' },
+  { typ: 'lied',  titel: 'Über den Wolken',        chor: 'Gemischter Chor' },
+  { typ: 'lied',  titel: 'Griechischer Wein',      chor: "D'A Chor" },
+  { typ: 'lied',  titel: 'Moon River',             solist: 'Anna Beispiel' },
+  { typ: 'lied',  titel: 'Ein Kompliment',         chor: 'Männerchor' },
+  { typ: 'text',  titel: 'Pause', text: 'Gleich geht’s weiter – gönnen Sie sich etwas zu trinken!' },
+  { typ: 'lied',  titel: 'Rock Around the Clock',  chor: 'Ried-Sternchen' },
+  { typ: 'lied',  titel: 'Hallelujah',             solist: 'Lena & Tom' },
+  { typ: 'lied',  titel: 'Atemlos durch die Nacht', chor: 'Frauenchor' },
+  { typ: 'lied',  titel: 'Thank You for the Music', chor: 'Alle Chöre' },
+  { typ: 'abstimmung', titel: 'Publikums-Voting', frage: 'Ihr Lieblingslied des Abends',
+    dauer: 12, stimmen: 214,
+    ergebnis: [
+      { titel: 'Über den Wolken',       prozent: 19 },
+      { titel: 'Griechischer Wein',     prozent: 31 },
+      { titel: 'Moon River',            prozent: 14 },
+      { titel: 'Rock Around the Clock', prozent: 24 },
+      { titel: 'Hallelujah',            prozent: 12 },
+    ] },
+  { typ: 'text',  titel: 'Vielen Dank!', text: 'Kommen Sie gut nach Hause – bis zum nächsten Jahr!' },
+];
+</script>
+<style>
+/*FONTS*/
+:root{--red:#E30A14;--cream:#f5ecdc;--ink:#2a1810;--neon:#ff2d55;--cyan:#4fe3ff;--gold:#ffc65a}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{width:100%;height:100%;background:#000;overflow:hidden}
+body.nocursor{cursor:none}
+#stage{position:absolute;left:50%;top:50%;width:1920px;height:1080px;overflow:hidden;transform:translate(-50%,-50%);
+  background:radial-gradient(ellipse 70% 60% at 50% 20%,#1d2342 0%,#0b0e1d 55%,#040409 100%);
+  font-family:Raleway,'Segoe UI',sans-serif;color:var(--cream);user-select:none}
+#snow{position:absolute;inset:0}
+#jb{position:absolute;inset:0;width:1920px;height:1080px;overflow:visible}
+#jb .btn.pressed rect{fill:#ffcf6b}
+.playing #grilleGlow{animation:pulse .9s ease-in-out infinite alternate}
+@keyframes pulse{from{opacity:.3}to{opacity:.9}}
+#noteBox{position:absolute;inset:0;pointer-events:none}
+.note{position:absolute;font-size:56px;font-family:'Segoe UI Symbol','Segoe UI',sans-serif;
+  text-shadow:0 0 10px currentColor,0 0 24px currentColor;will-change:transform,opacity}
+
+/* ---------- program racks (left / right of the window) ---------- */
+.rack{position:absolute;top:204px;width:540px;height:382px;padding:14px;border-radius:18px;
+  background:linear-gradient(180deg,#fbfcfd,#b4bbc3 40%,#6c747d 52%,#e3e7eb 62%,#9aa2aa);
+  box-shadow:0 10px 30px rgba(0,0,0,.6),inset 0 1px 0 #fff}
+#rackL{left:182px} #rackR{left:1198px}
+.rackIn{height:100%;border-radius:8px;background:radial-gradient(ellipse at 50% 30%,#3a1012,#12040a);
+  box-shadow:inset 0 0 30px rgba(0,0,0,.9);display:flex;flex-direction:column;justify-content:center;gap:9px;padding:12px 14px}
+.rs{position:relative;display:grid;grid-template-columns:auto 1fr;grid-template-rows:1fr auto;border-radius:4px;overflow:hidden;
+  background:linear-gradient(180deg,#fffaf0,#f1e6cf);box-shadow:0 2px 4px rgba(0,0,0,.6);transition:opacity .6s,box-shadow .6s,transform .6s}
+.rs .rc{grid-row:1/3;display:grid;place-items:center;padding:0 14px;font:600 var(--fc) Oswald;color:var(--red);border-right:2px solid rgba(227,10,20,.35)}
+.rs .rt{font:600 var(--ft)/1.15 Oswald;color:var(--ink);padding:2px 12px 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;align-self:center}
+.rs .rb{font:800 var(--fb)/1.45 Raleway;letter-spacing:.12em;text-transform:uppercase;color:#fff;background:#d50b14;padding:0 12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rs.played{opacity:.45}
+.rs.now{opacity:1;transform:scale(1.035);box-shadow:0 0 0 3px #ffcf6b,0 0 22px 4px rgba(255,190,80,.85)}
+
+/* ---------- now-playing strip (inside the jukebox) ---------- */
+#strip{position:absolute;left:160px;top:598px;width:1600px;height:222px;perspective:1200px}
+#strip .holder{position:relative;height:100%;padding:14px;border-radius:20px;transform-origin:50% 100%;
+  background:linear-gradient(180deg,#fbfcfd,#b4bbc3 40%,#6c747d 52%,#e3e7eb 62%,#9aa2aa);
+  box-shadow:0 14px 40px rgba(0,0,0,.7),inset 0 1px 0 #fff,inset 0 -2px 0 rgba(0,0,0,.35)}
+#strip .slot{position:absolute;inset:14px;border-radius:8px;background:radial-gradient(ellipse at 50% 40%,#3a1012,#12040a);box-shadow:inset 0 0 30px #000}
+.card{position:relative;height:100%;border-radius:8px;overflow:hidden;display:grid;grid-template-rows:1fr 70px 22px;opacity:0;
+  background:repeating-linear-gradient(0deg,rgba(120,80,40,.025) 0 2px,transparent 2px 5px),linear-gradient(180deg,#fffaf0,#f3e9d4);
+  box-shadow:inset 0 0 0 1px rgba(0,0,0,.12),inset 0 0 40px rgba(160,110,50,.15)}
+.card::before{content:'';position:absolute;left:16px;right:16px;top:10px;height:4px;background:var(--red);opacity:.85}
+.card .top{position:relative;display:flex;align-items:center;justify-content:center;padding:12px 150px 0}
+.card .t1{font:600 104px/1.05 Oswald,sans-serif;color:var(--ink);white-space:nowrap}
+.card .code{position:absolute;top:28px;font:600 46px Oswald;color:var(--red)}
+.card .code.l{left:34px} .card .code.r{right:34px}
+.card .band{display:flex;align-items:center;justify-content:center;gap:26px;background:linear-gradient(180deg,#f0141f,#c8060f);
+  color:#fff;box-shadow:inset 0 2px 0 rgba(255,255,255,.25),inset 0 -2px 0 rgba(0,0,0,.2)}
+.card .role{font:800 22px Raleway;letter-spacing:.24em;text-transform:uppercase;padding:6px 14px 6px 18px;border:2px solid rgba(255,255,255,.85);border-radius:30px}
+.card .who{font:800 44px Raleway;letter-spacing:.12em;text-transform:uppercase;white-space:nowrap}
+.card .foot::after{content:'';position:absolute;left:16px;right:16px;bottom:9px;height:4px;background:var(--red);opacity:.85}
+.card .shine{position:absolute;top:0;bottom:0;width:240px;left:-260px;pointer-events:none;
+  background:linear-gradient(100deg,transparent,rgba(255,255,255,.8),transparent);mix-blend-mode:soft-light}
+
+/* ---------- logo plate ---------- */
+#plate{position:absolute;left:1480px;top:888px;width:330px;height:138px;border-radius:16px;padding:9px;
+  background:linear-gradient(180deg,#fbfcfd,#b4bbc3 40%,#6c747d 52%,#e3e7eb 62%,#9aa2aa);box-shadow:0 6px 18px rgba(0,0,0,.6)}
+#plate div{height:100%;border-radius:9px;background:radial-gradient(ellipse at 50% 40%,#2a1a2e,#0c0710);display:grid;place-items:center;box-shadow:inset 0 0 20px #000}
+#plate img{height:114px}
+
+/* ---------- dim layer, text overlay, voting ---------- */
+#dim{position:absolute;inset:0;opacity:0;transition:opacity 1s;pointer-events:none;
+  background:radial-gradient(ellipse at 50% 45%,rgba(4,5,14,.74),rgba(2,2,6,.92))}
+.mode-text #dim,.mode-vote #dim{opacity:1}
+#overlay{position:absolute;left:0;right:0;top:250px;text-align:center;opacity:0;transition:opacity .6s;pointer-events:none}
+.mode-text #overlay{opacity:1}
+#overlay .big{font-family:Yellowtail,cursive;font-size:300px;line-height:1.05;color:#fff1f4;
+  text-shadow:0 0 5px #fff,0 0 14px #ff5c7c,0 0 30px var(--neon),0 0 60px var(--neon),0 0 110px var(--red)}
+#overlay .big.on{animation:flickerOn 1.3s steps(1) both}
+#overlay .sub{font:700 56px Raleway;letter-spacing:.04em;margin-top:30px;color:#fff7e8;text-shadow:0 0 20px rgba(255,200,140,.35)}
+#overlay .flakes{font-size:46px;letter-spacing:46px;margin-top:40px;color:var(--cyan);text-shadow:0 0 12px var(--cyan)}
+@keyframes flickerOn{0%{opacity:.1}8%{opacity:1}12%{opacity:.15}22%{opacity:1}26%{opacity:.2}34%,100%{opacity:1}}
+
+#vote{position:absolute;left:210px;top:60px;width:1500px;height:960px;padding:36px 60px;border-radius:36px;opacity:0;
+  transform:translateY(60px) scale(.97);transition:opacity .8s,transform 1s cubic-bezier(.2,.8,.2,1);pointer-events:none;
+  background:linear-gradient(180deg,rgba(18,22,44,.92),rgba(8,9,20,.95));border:3px solid #dffaff;
+  box-shadow:0 0 8px #fff,0 0 22px var(--cyan),0 0 50px rgba(79,227,255,.5),inset 0 0 30px rgba(79,227,255,.25)}
+.mode-vote #vote{opacity:1;transform:none}
+#vote .vtitle{font-family:Yellowtail,cursive;font-size:120px;line-height:1;text-align:center;color:#fff1f4;
+  text-shadow:0 0 4px #fff,0 0 12px #ff5c7c,0 0 26px var(--neon),0 0 54px var(--neon)}
+#vote .vq{text-align:center;font:700 42px Raleway;letter-spacing:.06em;margin-top:6px}
+#vote .vstatus{display:flex;align-items:center;gap:18px;margin:26px 0 22px;padding:14px 26px;border-radius:16px;background:rgba(255,255,255,.06);font:700 34px Raleway}
+#vote .dot{width:22px;height:22px;border-radius:50%;background:var(--gold);box-shadow:0 0 12px var(--gold)}
+#vote.running .dot{background:#ff2d2d;box-shadow:0 0 14px #ff2d2d;animation:blink .8s steps(1) infinite}
+#vote.done .dot{background:#3dff8b;box-shadow:0 0 14px #3dff8b}
+#vote.ready .vs{animation:blink 1.4s ease-in-out infinite}
+@keyframes blink{50%{opacity:.25}}
+#vote .vcount{margin-left:auto;font:500 40px Oswald;color:var(--gold)}
+.vrows{display:flex;flex-direction:column}
+.vrow{display:grid;grid-template-columns:96px 440px 1fr;align-items:center;gap:24px;padding:10px 16px;border-radius:18px;transition:background .6s,transform .6s,opacity .6s}
+.vcode{width:80px;height:80px;border-radius:50%;display:grid;place-items:center;font:600 34px Oswald;color:#2a1810;position:relative;
+  background:radial-gradient(circle at 35% 30%,#fff,#b9c0c8 55%,#6f7882);box-shadow:0 3px 8px rgba(0,0,0,.6),inset 0 0 0 5px var(--c)}
+.vt{font:600 44px/1.1 Oswald;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.vc{font:700 22px Raleway;letter-spacing:.14em;text-transform:uppercase;opacity:.75;margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.vbar{position:relative;height:60px;border-radius:30px;background:rgba(0,0,0,.45);box-shadow:inset 0 2px 6px rgba(0,0,0,.8)}
+.vfill{position:absolute;left:0;top:0;bottom:0;width:0;border-radius:30px;min-width:60px;
+  background:linear-gradient(180deg,rgba(255,255,255,.45),rgba(255,255,255,0) 50%),linear-gradient(90deg,color-mix(in srgb,var(--c) 70%,#000),var(--c));
+  box-shadow:0 0 18px color-mix(in srgb,var(--c) 70%,transparent)}
+.vpct{position:absolute;left:100%;top:50%;transform:translateY(-50%);margin-left:18px;font:600 48px Oswald;white-space:nowrap}
+.vrow.lead{background:rgba(255,255,255,.05)}
+.vrow.win{background:rgba(255,198,90,.14);transform:scale(1.03);box-shadow:0 0 0 2px rgba(255,198,90,.6),0 0 40px rgba(255,198,90,.35)}
+.vrow.win .vfill{background:linear-gradient(180deg,rgba(255,255,255,.55),rgba(255,255,255,0) 50%),linear-gradient(90deg,#c98a16,#ffd66b);box-shadow:0 0 30px #ffc65a}
+.vrow.win .vpct{color:var(--gold);text-shadow:0 0 16px #ff9d1a}
+.vrow.win .vcode::after{content:'★';position:absolute;top:-34px;font-size:38px;color:var(--gold);text-shadow:0 0 12px #ffb000}
+.vrow.lose{opacity:.5}
+
+#black{position:absolute;inset:0;background:#000;display:grid;place-items:center;transition:opacity 1.6s;z-index:20}
+#black.gone{opacity:0;pointer-events:none}
+#black .hint{font:600 24px Raleway;letter-spacing:.2em;text-transform:uppercase;color:#555;text-align:center;line-height:2}
+#help{position:absolute;right:40px;top:40px;padding:26px 34px;border-radius:16px;background:rgba(0,0,0,.85);border:1px solid #333;
+  font:500 26px/1.7 Raleway;color:#ddd;z-index:30;display:none}
+#help b{display:inline-block;min-width:160px;color:var(--gold);font-family:Oswald;font-weight:500}
+#rotate{display:none;position:fixed;left:0;right:0;top:0;padding:18px;text-align:center;z-index:40;
+  font:600 18px Raleway,sans-serif;color:#ffc65a;background:rgba(0,0,0,.85)}
+@media (orientation:portrait) and (max-width:900px){#rotate{display:block}}
+#toast{position:absolute;left:50%;top:40px;transform:translateX(-50%);padding:12px 26px;border-radius:30px;background:rgba(0,0,0,.8);
+  font:600 26px Raleway;z-index:30;opacity:0;transition:opacity .4s}
+.confetti{position:absolute;top:-60px;will-change:transform;pointer-events:none;z-index:15}
+</style>
+</head>
+<body>
+<div id="rotate">↻ Für die beste Ansicht das Handy quer halten</div>
+<div id="stage" class="mode-main">
+  <canvas id="snow" width="1920" height="1080"></canvas>
+
+<svg id="jb" viewBox="0 0 1920 1080" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="gChrome" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff"/><stop offset=".38" stop-color="#bcc3cb"/><stop offset=".52" stop-color="#666f79"/>
+      <stop offset=".64" stop-color="#eef1f4"/><stop offset="1" stop-color="#8d959e"/>
+    </linearGradient>
+    <linearGradient id="gChromeH" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#7d858e"/><stop offset=".3" stop-color="#ffffff"/><stop offset=".55" stop-color="#9aa2ab"/>
+      <stop offset=".8" stop-color="#e9edf1"/><stop offset="1" stop-color="#5f6770"/>
+    </linearGradient>
+    <linearGradient id="gWood" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#2a1309"/><stop offset=".08" stop-color="#5a2c14"/><stop offset=".5" stop-color="#8f4d24"/>
+      <stop offset=".92" stop-color="#5a2c14"/><stop offset="1" stop-color="#2a1309"/>
+    </linearGradient>
+    <linearGradient id="gWoodV" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#6d3618"/><stop offset="1" stop-color="#2c1408"/></linearGradient>
+    <linearGradient id="gBand" gradientUnits="userSpaceOnUse" x1="0" y1="30" x2="0" y2="1040">
+      <stop offset="0" stop-color="#ff2d55"><animate attributeName="stop-color" values="#ff2d55;#ff8a00;#ffd23f;#ff4f8b;#ff2d55" dur="16s" repeatCount="indefinite"/></stop>
+      <stop offset=".33" stop-color="#ff8a00"><animate attributeName="stop-color" values="#ff8a00;#ffd23f;#ff4f8b;#ff2d55;#ff8a00" dur="16s" repeatCount="indefinite"/></stop>
+      <stop offset=".66" stop-color="#ffd23f"><animate attributeName="stop-color" values="#ffd23f;#ff4f8b;#ff2d55;#ff8a00;#ffd23f" dur="16s" repeatCount="indefinite"/></stop>
+      <stop offset="1" stop-color="#ff4f8b"><animate attributeName="stop-color" values="#ff4f8b;#ff2d55;#ff8a00;#ffd23f;#ff4f8b" dur="16s" repeatCount="indefinite"/></stop>
+    </linearGradient>
+    <radialGradient id="gBack" cx="300" cy="330" r="260" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#451219"/><stop offset=".6" stop-color="#1c070b"/><stop offset="1" stop-color="#070205"/>
+    </radialGradient>
+    <radialGradient id="gWarm"><stop offset="0" stop-color="#ffe0a8" stop-opacity=".9"/><stop offset="1" stop-color="#ff8a3d" stop-opacity="0"/></radialGradient>
+    <radialGradient id="gFabric" cx="50%" cy="50%" r="60%"><stop offset="0" stop-color="#5e1716"/><stop offset="1" stop-color="#1c0505"/></radialGradient>
+    <radialGradient id="gVinyl"><stop offset="0" stop-color="#2a2a2a"/><stop offset=".7" stop-color="#121212"/><stop offset="1" stop-color="#050505"/></radialGradient>
+    <linearGradient id="gGlass" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#fff" stop-opacity=".16"/><stop offset=".45" stop-color="#fff" stop-opacity=".02"/><stop offset="1" stop-color="#fff" stop-opacity=".07"/>
+    </linearGradient>
+    <linearGradient id="gDeck" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#9aa2ab"/><stop offset=".15" stop-color="#4b525a"/><stop offset="1" stop-color="#17191c"/></linearGradient>
+    <linearGradient id="gTube" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#fff" stop-opacity=".1"/><stop offset=".35" stop-color="#fff6d8" stop-opacity=".55"/><stop offset="1" stop-color="#fff" stop-opacity=".08"/>
+    </linearGradient>
+    <pattern id="pLattice" width="34" height="34" patternUnits="userSpaceOnUse">
+      <path d="M-2 36 L36 -2 M-2 2 L2 -2 M32 36 L36 32" stroke="#2a0b0b" stroke-width="4.5"/>
+      <path d="M0 0 L34 34 M0 34 L34 0" stroke="#d6dce2" stroke-width="2.6"/>
+      <path d="M0 0 L34 34" stroke="#fff" stroke-width=".9" opacity=".7"/>
+    </pattern>
+    <filter id="fGlow" x="-20%" y="-20%" width="140%" height="140%"><feGaussianBlur stdDeviation="26"/></filter>
+    <filter id="fSoft" x="-20%" y="-20%" width="140%" height="140%"><feGaussianBlur stdDeviation="3"/></filter>
+    <filter id="fLed" x="-30%" y="-60%" width="160%" height="220%"><feGaussianBlur stdDeviation="1.6" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+    <clipPath id="cWindow"><path d="M125 490 L125 330 A175 175 0 0 1 475 330 L475 490 Z"/></clipPath>
+    <clipPath id="cGrille"><rect x="110" y="888" width="1340" height="138" rx="16"/></clipPath>
+    <clipPath id="cTubeL"><rect x="43" y="380" width="14" height="640" rx="7"/></clipPath>
+    <clipPath id="cTubeR"><rect x="1863" y="380" width="14" height="640" rx="7"/></clipPath>
+  </defs>
+
+  <!-- glow behind the light band -->
+  <path id="bandGlow" d="M30 1040 L30 330 A930 300 0 0 1 1890 330 L1890 1040" fill="none" stroke="#ff7a3d" stroke-width="50" filter="url(#fGlow)" opacity="0"/>
+  <!-- outer chrome rim + light band -->
+  <path d="M24 1042 L24 330 A936 306 0 0 1 1896 330 L1896 1042 Z" fill="url(#gChromeH)"/>
+  <path id="band" fill-rule="evenodd" fill="url(#gBand)"
+        d="M30 1040 L30 330 A930 300 0 0 1 1890 330 L1890 1040 Z M70 1040 L70 330 A890 262 0 0 1 1850 330 L1850 1040 Z"/>
+  <g id="ribs" stroke="#7a1010" stroke-opacity=".28" stroke-width="2.4"></g>
+  <path d="M50 1040 L50 330 A910 281 0 0 1 1870 330 L1870 1040" fill="none" stroke="#fff" stroke-opacity=".55" stroke-width="6" filter="url(#fSoft)"/>
+  <rect x="43" y="380" width="14" height="640" rx="7" fill="url(#gTube)" stroke="#fff" stroke-opacity=".5"/>
+  <rect x="1863" y="380" width="14" height="640" rx="7" fill="url(#gTube)" stroke="#fff" stroke-opacity=".5"/>
+  <g id="bubblesL" clip-path="url(#cTubeL)"></g>
+  <g id="bubblesR" clip-path="url(#cTubeR)"></g>
+  <path id="bandOff" fill-rule="evenodd" fill="#1a0b0b"
+        d="M30 1040 L30 330 A930 300 0 0 1 1890 330 L1890 1040 Z M70 1040 L70 330 A890 262 0 0 1 1850 330 L1850 1040 Z"/>
+
+  <!-- wooden body -->
+  <path d="M70 1040 L70 330 A890 262 0 0 1 1850 330 L1850 1040 Z" fill="url(#gWood)" stroke="url(#gChromeH)" stroke-width="6"/>
+  <path d="M110 330 A850 224 0 0 1 1810 330" fill="none" stroke="url(#gChrome)" stroke-width="4"/>
+  <path d="M150 330 A810 188 0 0 1 1770 330" fill="none" stroke="url(#gChrome)" stroke-width="2.5" opacity=".8"/>
+  <path d="M110 330 L110 580 M1810 330 L1810 580" stroke="url(#gChromeH)" stroke-width="4"/>
+  <path d="M908 34 Q960 4 1012 34 Z" fill="url(#gChrome)" stroke="#555" stroke-width=".8"/>
+  <text x="960" y="30" text-anchor="middle" font-family="Oswald" font-size="13" fill="#5a3a1a" letter-spacing="1">1871</text>
+
+  <!-- ===== mechanism window (drawn in its own coordinates, scaled ×1.3) ===== -->
+  <g transform="translate(960 100) scale(1.3) translate(-300 -155)">
+    <path d="M115 500 L115 330 A185 185 0 0 1 485 330 L485 500 Z" fill="#1a0d08" opacity=".6"/>
+    <g clip-path="url(#cWindow)">
+      <rect x="120" y="150" width="360" height="345" fill="url(#gBack)"/>
+      <g id="rays" opacity=".5"></g>
+      <ellipse id="mGlow" cx="388" cy="420" rx="170" ry="110" fill="url(#gWarm)" opacity="0"/>
+      <rect x="156" y="230" width="6" height="200" fill="url(#gChromeH)"/>
+      <rect x="262" y="230" width="6" height="200" fill="url(#gChromeH)"/>
+      <g id="stack"></g>
+      <rect x="190" y="430" width="44" height="34" fill="url(#gDeck)"/>
+      <rect x="142" y="424" width="140" height="8" rx="2" fill="url(#gChrome)"/>
+      <rect x="296" y="206" width="8" height="262" fill="url(#gChromeH)"/>
+      <rect x="120" y="462" width="360" height="40" fill="url(#gDeck)"/>
+      <rect x="448" y="400" width="8" height="63" fill="url(#gChromeH)"/>
+      <ellipse cx="388" cy="453" rx="72" ry="20" fill="#1b1d20"/>
+      <rect x="316" y="440" width="144" height="13" fill="url(#gChromeH)"/>
+      <ellipse cx="388" cy="440" rx="72" ry="20" fill="url(#gChrome)"/>
+      <ellipse cx="388" cy="439" rx="66" ry="18" fill="#191919"/>
+      <rect x="386.5" y="429" width="3" height="10" rx="1" fill="url(#gChromeH)"/>
+      <g id="onPlatter"></g>
+      <g id="moving"></g>
+      <g id="tone">
+        <rect x="-22" y="-5.5" width="13" height="11" rx="2.5" fill="url(#gChrome)" stroke="#444" stroke-width=".6"/>
+        <line x1="-9" y1="0" x2="40" y2="0" stroke="url(#gChrome)" stroke-width="4" stroke-linecap="round"/>
+        <line x1="-9" y1="-1" x2="40" y2="-1" stroke="#fff" stroke-width="1" opacity=".7"/>
+        <rect x="38" y="-4" width="13" height="8" rx="1.5" fill="#e3e6ea" stroke="#555" stroke-width=".6"/>
+        <rect x="47" y="3" width="2" height="4" fill="#333"/>
+      </g>
+      <ellipse cx="452" cy="400" rx="8" ry="4" fill="url(#gChrome)" stroke="#444" stroke-width=".6"/>
+      <g id="carriage">
+        <line id="armS" stroke="#2b2f34" stroke-width="7" stroke-linecap="round"/>
+        <line id="arm" stroke="url(#gChromeH)" stroke-width="5" stroke-linecap="round"/>
+        <rect id="cBlock" x="288" width="24" height="16" rx="3" fill="url(#gChrome)" stroke="#444" stroke-width=".6"/>
+        <circle id="clamp" r="5" fill="url(#gChrome)" stroke="#333" stroke-width=".8"/>
+      </g>
+    </g>
+    <path d="M125 490 L125 330 A175 175 0 0 1 475 330 L475 490 Z" fill="url(#gGlass)"/>
+    <path d="M150 470 L250 170 L285 165 L185 480 Z" fill="#fff" opacity=".05"/>
+    <path d="M125 490 L125 330 A175 175 0 0 1 475 330 L475 490 Z" fill="none" stroke="#000" stroke-opacity=".55" stroke-width="16" clip-path="url(#cWindow)"/>
+    <path d="M125 490 L125 330 A175 175 0 0 1 475 330 L475 490 Z" fill="none" stroke="url(#gChromeH)" stroke-width="9"/>
+    <rect x="252" y="491" width="96" height="32" rx="7" fill="url(#gChrome)" stroke="#444" stroke-width=".8"/>
+    <rect x="259" y="496" width="82" height="22" rx="4" fill="#120404"/>
+    <text id="display" x="300" y="514" text-anchor="middle" font-family="Oswald" font-weight="500" font-size="19" letter-spacing="3" fill="#ff3b30" filter="url(#fLed)">– –</text>
+  </g>
+
+  <!-- selector buttons -->
+  <rect x="628" y="832" width="664" height="48" rx="10" fill="url(#gChrome)"/>
+  <rect x="634" y="838" width="652" height="36" rx="7" fill="#1a0f0b"/>
+  <g id="buttons"></g>
+
+  <!-- speaker grille -->
+  <g clip-path="url(#cGrille)">
+    <rect x="110" y="888" width="1340" height="138" fill="url(#gFabric)"/>
+    <ellipse id="grilleGlow" cx="780" cy="957" rx="640" ry="110" fill="url(#gWarm)" opacity=".25"/>
+    <rect x="110" y="888" width="1340" height="138" fill="url(#pLattice)"/>
+  </g>
+  <rect x="110" y="888" width="1340" height="138" rx="16" fill="none" stroke="url(#gChromeH)" stroke-width="8"/>
+  <ellipse cx="780" cy="957" rx="92" ry="58" fill="url(#gChrome)" stroke="#333"/>
+  <ellipse cx="780" cy="957" rx="80" ry="48" fill="#7d0c10"/>
+  <ellipse cx="780" cy="957" rx="80" ry="48" fill="url(#gWarm)" opacity=".25"/>
+  <text x="780" y="968" text-anchor="middle" font-family="Yellowtail" font-size="52" fill="#fff3e0">GV</text>
+  <text x="780" y="992" text-anchor="middle" font-family="Oswald" font-size="13" letter-spacing="4" fill="#ffd9a0">1871</text>
+
+  <!-- base -->
+  <rect x="28" y="1036" width="1864" height="10" fill="url(#gChrome)"/>
+  <path d="M20 1046 L1900 1046 L1894 1076 L26 1076 Z" fill="url(#gWoodV)" stroke="#1a0b05"/>
+</svg>
+
+  <div class="rack" id="rackL"><div class="rackIn"></div></div>
+  <div class="rack" id="rackR"><div class="rackIn"></div></div>
+
+  <div id="strip"><div class="holder"><div class="slot"></div><div class="card">
+    <div class="top"><span class="code l"></span><div class="t1"></div><span class="code r"></span></div>
+    <div class="band"><span class="role"></span><span class="who"></span></div>
+    <div class="foot"></div>
+    <div class="shine"></div>
+  </div></div></div>
+
+  <div id="plate"><div><img alt="Aldener Gesangverein 1871 e.V." src="__LOGO__"></div></div>
+  <div id="noteBox"></div>
+
+  <div id="dim"></div>
+  <div id="overlay"><div class="big"></div><div class="sub"></div><div class="flakes">❄ ❄ ❄</div></div>
+  <div id="vote">
+    <div class="vtitle"></div>
+    <div class="vq"></div>
+    <div class="vstatus"><span class="dot"></span><span class="vs"></span><span class="vcount"></span></div>
+    <div class="vrows"></div>
+  </div>
+
+  <div id="black"><div class="hint">Tippen / Leertaste zum Starten<br>Weiter: Tippen, Wischen oder → · Zurück: linker Rand oder ←<br>F = Vollbild · H = Hilfe</div></div>
+  <div id="help">
+    <b>→ / Leertaste</b> weiter (auch Klick / Tippen)<br>
+    <b>← / linker Rand</b> zurück<br>
+    <b>F</b> Vollbild<br>
+    <b>M</b> Ton an / aus<br>
+    <b>Pos1</b> von vorn beginnen<br>
+    <b>H</b> Hilfe ein / aus
+  </div>
+  <div id="toast"></div>
+</div>
+
+<script>
+'use strict';
+const $ = s => document.querySelector(s);
+const NS = 'http://www.w3.org/2000/svg';
+function S(tag, attrs, parent) {
+  const e = document.createElementNS(NS, tag);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  if (parent) parent.appendChild(e);
+  return e;
+}
+const rand = (a, b) => a + Math.random() * (b - a);
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+/* ---------- songs ---------- */
+const LABEL_COLORS = ['#E30A14', '#f2b632', '#2f7de1', '#2fbf71', '#9b51e0', '#ff7a1a', '#17b6b0', '#e84393'];
+const SONGS = PROGRAMM.filter(p => p.typ === 'lied');
+SONGS.forEach((s, i) => {
+  s.code = 'ABCD'[Math.floor(i / 9)] + (i % 9 + 1);
+  s.color = LABEL_COLORS[i % 8];
+  s.slot = i % 8;
+  s.nr = i;
+});
+
+/* ---------- stage scaling & cursor ---------- */
+const stage = $('#stage');
+function fit() {
+  const s = Math.min(innerWidth / 1920, innerHeight / 1080);
+  stage.style.transform = `translate(-50%,-50%) scale(${s})`;
+}
+addEventListener('resize', fit); fit();
+let cursorTimer;
+addEventListener('mousemove', () => {
+  document.body.classList.remove('nocursor');
+  clearTimeout(cursorTimer);
+  cursorTimer = setTimeout(() => document.body.classList.add('nocursor'), 2000);
+});
+
+/* ---------- tweening (HURRY = skip ahead when presenter clicks during an animation) ---------- */
+let HURRY = false;
+const E = {
+  lin: t => t,
+  inOut: t => t < .5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2,
+  out: t => 1 - Math.pow(1 - t, 3),
+};
+function tween(ms, fn, ease = E.inOut) {
+  return new Promise(res => {
+    let el = 0, last = performance.now();
+    function f(now) {
+      el += (now - last) * (HURRY ? 15 : 1); last = now;
+      const t = Math.min(1, el / (ms / TEMPO));
+      fn(ease(t));
+      t < 1 ? requestAnimationFrame(f) : res();
+    }
+    requestAnimationFrame(f);
+  });
+}
+const wait = ms => tween(ms, () => {}, E.lin);
+
+/* ---------- sound (synthesised, no files) ---------- */
+const sfx = {
+  ctx: null, on: true,
+  init() { if (!this.ctx) try { this.ctx = new AudioContext(); } catch (e) {} },
+  ok() { return this.on && this.ctx && !HURRY; },
+  noise(dur) {
+    const c = this.ctx, b = c.createBuffer(1, Math.max(1, c.sampleRate * dur | 0), c.sampleRate), d = b.getChannelData(0);
+    for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+    const s = c.createBufferSource(); s.buffer = b; return s;
+  },
+  env(peak, a, d) {
+    const g = this.ctx.createGain(), t = this.ctx.currentTime;
+    g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(peak, t + a); g.gain.exponentialRampToValueAtTime(.0001, t + a + d);
+    g.connect(this.ctx.destination); return g;
+  },
+  click() {
+    if (!this.ok()) return;
+    const n = this.noise(.04), f = this.ctx.createBiquadFilter();
+    f.type = 'highpass'; f.frequency.value = 1800; n.connect(f); f.connect(this.env(.35, .002, .04)); n.start();
+  },
+  motor(ms) {
+    if (!this.ok() || ms < 120) return;
+    const c = this.ctx, d = ms / 1000 / TEMPO, o = c.createOscillator(), f = c.createBiquadFilter(), g = c.createGain(), t = c.currentTime;
+    o.type = 'sawtooth'; o.frequency.setValueAtTime(70, t); o.frequency.linearRampToValueAtTime(95, t + d * .5); o.frequency.linearRampToValueAtTime(75, t + d);
+    f.type = 'lowpass'; f.frequency.value = 380;
+    g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(.05, t + .06); g.gain.setValueAtTime(.05, t + d - .08); g.gain.linearRampToValueAtTime(0, t + d);
+    o.connect(f); f.connect(g); g.connect(c.destination); o.start(t); o.stop(t + d + .05);
+  },
+  thunk() {
+    if (!this.ok()) return;
+    const c = this.ctx, o = c.createOscillator(), t = c.currentTime;
+    o.frequency.setValueAtTime(120, t); o.frequency.exponentialRampToValueAtTime(40, t + .18);
+    o.connect(this.env(.45, .005, .22)); o.start(); o.stop(t + .3);
+    this.click();
+  },
+  crackle(sec) {
+    if (!this.ok()) return;
+    const c = this.ctx, len = c.sampleRate * sec | 0, b = c.createBuffer(1, len, c.sampleRate), d = b.getChannelData(0);
+    for (let i = 0; i < len; i++) {
+      const fade = Math.min(1, i / (c.sampleRate * .3)) * Math.min(1, (len - i) / (c.sampleRate * 1.2));
+      d[i] = ((Math.random() * 2 - 1) * .05 + (Math.random() < .0009 ? (Math.random() * 2 - 1) * .9 : 0)) * fade;
+    }
+    const s = c.createBufferSource(), f = c.createBiquadFilter(), g = c.createGain();
+    s.buffer = b; f.type = 'bandpass'; f.frequency.value = 2600; f.Q.value = .6; g.gain.value = .5;
+    s.connect(f); f.connect(g); g.connect(c.destination); s.start();
+  },
+  fanfare() {
+    if (!this.ok()) return;
+    [523, 659, 784, 1047].forEach((fr, i) => {
+      const o = this.ctx.createOscillator(), t = this.ctx.currentTime + i * .12;
+      o.type = 'triangle'; o.frequency.value = fr;
+      const g = this.ctx.createGain(); g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(.18, t + .02); g.gain.exponentialRampToValueAtTime(.0001, t + .9);
+      o.connect(g); g.connect(this.ctx.destination); o.start(t); o.stop(t + 1);
+    });
+  },
+};
+
+/* =====================================================================
+   JUKEBOX – SVG construction
+   ===================================================================== */
+(() => {
+  // ribs on the light band (elliptical arch + pilasters)
+  const g = $('#ribs');
+  for (let a = 180; a <= 360; a += 3.6) {
+    const r = a * Math.PI / 180, c = Math.cos(r), s = Math.sin(r);
+    S('line', { x1: 960 + 890 * c, y1: 330 + 262 * s, x2: 960 + 930 * c, y2: 330 + 300 * s }, g);
+  }
+  for (let y = 352; y < 1036; y += 28) {
+    S('line', { x1: 30, y1: y, x2: 70, y2: y }, g);
+    S('line', { x1: 1850, y1: y, x2: 1890, y2: y }, g);
+  }
+  // sunburst behind the mechanism
+  const rays = $('#rays');
+  for (let i = 0; i < 22; i++) {
+    const a1 = (186 + i * 8) * Math.PI / 180, a2 = (186 + i * 8 + 4) * Math.PI / 180;
+    S('path', { d: `M300 470 L${300 + 420 * Math.cos(a1)} ${470 + 420 * Math.sin(a1)} L${300 + 420 * Math.cos(a2)} ${470 + 420 * Math.sin(a2)} Z`, fill: '#ffb85c', opacity: .14 }, rays);
+  }
+  // bubbles
+  for (const [id, cx] of [['#bubblesL', 50], ['#bubblesR', 1870]]) {
+    const bg = $(id);
+    for (let i = 0; i < 11; i++) {
+      const c = S('circle', { cx, cy: 1020, r: rand(2, 4), fill: '#fff', 'fill-opacity': rand(.55, .9) }, bg);
+      S('animate', { attributeName: 'cy', from: 1028, to: 372, dur: rand(4, 8).toFixed(2) + 's', begin: (-rand(0, 8)).toFixed(2) + 's', repeatCount: 'indefinite' }, c);
+      S('animate', { attributeName: 'cx', values: `${cx - 2};${cx + 2};${cx - 2}`, dur: rand(1, 2).toFixed(2) + 's', repeatCount: 'indefinite' }, c);
+    }
+  }
+  // selector buttons
+  const bt = $('#buttons');
+  ['A', 'B', 'C', 'D', '1', '2', '3', '4', '5', '6', '7', '8', '9'].forEach((l, i) => {
+    const g2 = S('g', { class: 'btn', id: 'btn' + l }, bt), x = 642 + i * 49.4;
+    S('rect', { x, y: 842, width: 42, height: 28, rx: 6, fill: 'url(#gChrome)', stroke: '#333', 'stroke-width': .8 }, g2);
+    const t = S('text', { x: x + 21, y: 862, 'text-anchor': 'middle', 'font-family': 'Oswald', 'font-size': 17, fill: '#2a2a2a' }, g2);
+    t.textContent = l;
+  });
+})();
+
+/* ---------- program racks ---------- */
+const rackStrips = [];
+(() => {
+  const half = Math.ceil(SONGS.length / 2);
+  const cols = [SONGS.slice(0, half), SONGS.slice(half)];
+  const inner = 382 - 28 - 24, gap = 9;
+  const h = Math.min(100, (inner - (half - 1) * gap) / Math.max(1, half));
+  [$('#rackL .rackIn'), $('#rackR .rackIn')].forEach((box, ci) => {
+    box.style.setProperty('--ft', Math.round(h * .5) + 'px');
+    box.style.setProperty('--fb', Math.max(12, Math.round(h * .25)) + 'px');
+    box.style.setProperty('--fc', Math.round(h * .38) + 'px');
+    for (const s of cols[ci]) {
+      const d = document.createElement('div');
+      d.className = 'rs'; d.style.height = h + 'px';
+      d.innerHTML = '<span class="rc"></span><div class="rt"></div><div class="rb"></div>';
+      d.querySelector('.rc').textContent = s.code;
+      d.querySelector('.rt').textContent = s.titel;
+      d.querySelector('.rb').textContent = s.chor || s.solist;
+      box.appendChild(d); rackStrips[s.nr] = d;
+    }
+  });
+})();
+function markRack(nr) {
+  rackStrips.forEach((d, i) => { d.classList.toggle('now', i === nr); d.classList.toggle('played', nr != null && i < nr); });
+}
+
+/* ---------- records ---------- */
+const SLOT_Y = k => 245 + 22 * k;
+const STACK_X = 212, PLAT_X = 388, PLAT_Y = 433, PIV_X = 300, ARM_L = 88, PERSP = .28, PARK_Y = 222;
+const TONE = { x: 452, y: 400, rest: 90, play: 133.4 };
+const stackG = $('#stack'), movingG = $('#moving'), platG = $('#onPlatter');
+
+function makeRecord(k) {
+  const g = S('g', { 'data-k': k });
+  S('ellipse', { cx: 0, cy: 3, rx: 65, ry: 65 * PERSP, fill: '#060606' }, g);
+  S('ellipse', { cx: 0, cy: 1.5, rx: 65, ry: 65 * PERSP, fill: '#1c1c1c' }, g);
+  const sc = S('g', { transform: `scale(1 ${PERSP})` }, g);
+  const spin = S('g', {}, sc);
+  S('circle', { r: 65, fill: 'url(#gVinyl)' }, spin);
+  for (let r = 28; r < 63; r += 3.2) S('circle', { r, fill: 'none', stroke: '#fff', 'stroke-opacity': r % 2 < 1 ? .07 : .035, 'stroke-width': 1 }, spin);
+  const label = S('circle', { r: 22, fill: LABEL_COLORS[k] }, spin);
+  S('circle', { r: 22, fill: 'none', stroke: '#000', 'stroke-opacity': .35, 'stroke-width': 1.5 }, spin);
+  S('circle', { r: 15, fill: 'none', stroke: '#fff', 'stroke-opacity': .5, 'stroke-width': 1 }, spin);
+  S('rect', { x: -2.5, y: -21, width: 5, height: 9, rx: 1, fill: '#fff', 'fill-opacity': .9 }, spin);
+  const txt = S('text', { y: 12, 'text-anchor': 'middle', 'font-family': 'Oswald', 'font-size': 8, fill: '#fff' }, spin);
+  S('circle', { r: 2.6, fill: '#000' }, spin);
+  S('path', { d: 'M0 0 L-46 -46 A65 65 0 0 1 -20 -62 Z M0 0 L46 46 A65 65 0 0 1 20 62 Z', fill: '#fff', opacity: .06 }, sc);
+  return { g, spin, label, txt, k, angle: 0 };
+}
+function setPos(r, x, y) { r.g.setAttribute('transform', `translate(${x.toFixed(2)} ${y.toFixed(2)})`); }
+function placeInStack(r) {
+  const before = [...stackG.children].find(c => +c.dataset.k < r.k);
+  stackG.insertBefore(r.g, before || null);
+}
+const recs = [];
+for (let k = 0; k < 8; k++) {
+  const r = makeRecord(k);
+  const s = SONGS.find(s => s.slot === k);
+  if (s) r.txt.textContent = s.code;
+  recs.push(r); placeInStack(r); setPos(r, STACK_X, SLOT_Y(k));
+}
+
+/* ---------- jukebox state & rendering ---------- */
+const J = { cy: PARK_Y, th: Math.PI / 2, grip: 0, tone: TONE.rest, lift: 0, spinV: 0, held: null, cur: null };
+const armEl = $('#arm'), armS = $('#armS'), cBlock = $('#cBlock'), clamp = $('#clamp'), toneEl = $('#tone');
+
+function drawCarriage() {
+  const ex = PIV_X + ARM_L * Math.cos(J.th), ey = J.cy + ARM_L * PERSP * Math.sin(J.th);
+  for (const l of [armEl, armS]) { l.setAttribute('x1', PIV_X); l.setAttribute('y1', J.cy); l.setAttribute('x2', ex); l.setAttribute('y2', ey); }
+  cBlock.setAttribute('y', J.cy - 8);
+  clamp.setAttribute('cx', ex); clamp.setAttribute('cy', ey); clamp.setAttribute('r', 5.5 - J.grip * 1.8);
+  if (J.held) {
+    setPos(J.held, ex, ey);
+    const want = J.th > Math.PI * .88 ? stackG : movingG;
+    if (J.held.g.parentNode !== want) want === stackG ? placeInStack(J.held) : movingG.appendChild(J.held.g);
+  }
+}
+function drawTone() {
+  toneEl.setAttribute('transform', `translate(${TONE.x} ${TONE.y - 5 * J.lift}) rotate(${J.tone})`);
+}
+drawCarriage(); drawTone();
+
+let lastT = performance.now();
+(function loop(now) {
+  const dt = (now - lastT) / 1000; lastT = now;
+  if (J.cur && J.spinV) {
+    J.cur.angle = (J.cur.angle + J.spinV * dt) % 360;
+    J.cur.spin.setAttribute('transform', `rotate(${J.cur.angle.toFixed(1)})`);
+  }
+  requestAnimationFrame(loop);
+})(lastT);
+
+async function carriage(toY, toTh, ms, ease = E.inOut) {
+  const y0 = J.cy, t0 = J.th;
+  if (Math.abs(toY - y0) < .5 && Math.abs(toTh - t0) < .01) return;
+  sfx.motor(ms);
+  await tween(ms, t => { J.cy = y0 + (toY - y0) * t; J.th = t0 + (toTh - t0) * t; drawCarriage(); }, ease);
+}
+const vMs = (a, b) => 260 + Math.abs(a - b) * 3.2;
+async function grip(on) { sfx.click(); await tween(160, t => { J.grip = on ? t : 1 - t; drawCarriage(); }); }
+async function spinTo(v, ms) { const v0 = J.spinV; await tween(ms, t => J.spinV = v0 + (v - v0) * t, E.inOut); }
+async function toneTo(a, ms) { const a0 = J.tone; await tween(ms, t => { J.tone = a0 + (a - a0) * t; drawTone(); }); }
+async function liftTo(l, ms) { const l0 = J.lift; await tween(ms, t => { J.lift = l0 + (l - l0) * t; drawTone(); }); }
+
+const jb = {
+  async select(song) {
+    for (const l of [song.code[0], song.code.slice(1)]) {
+      const b = $('#btn' + l);
+      b.classList.add('pressed'); b.setAttribute('transform', 'translate(0 2)'); sfx.click();
+      await wait(260);
+      b.classList.remove('pressed'); b.removeAttribute('transform');
+      await wait(120);
+    }
+    const d = $('#display');
+    d.textContent = song.code;
+    d.animate([{ opacity: 0 }, { opacity: 1 }, { opacity: .2 }, { opacity: 1 }], { duration: 400 });
+    markRack(song.nr);
+  },
+  async unload() {
+    const r = J.cur;
+    if (!r) return;
+    this.setPlaying(false);
+    sfx.click();
+    spinTo(0, 1300);
+    await liftTo(1, 250);
+    await Promise.all([toneTo(TONE.rest, 650).then(() => liftTo(0, 200)), carriage(PLAT_Y, 0, 900)]);
+    await grip(true);
+    J.cur = null; J.held = r; movingG.appendChild(r.g); drawCarriage();
+    await carriage(SLOT_Y(r.k), 0, vMs(PLAT_Y, SLOT_Y(r.k)));
+    await carriage(SLOT_Y(r.k), Math.PI, 1000);
+    await grip(false);
+    J.held = null; placeInStack(r);
+    await carriage(SLOT_Y(r.k), Math.PI / 2, 380);
+  },
+  async load(song) {
+    const r = recs[song.slot];
+    r.label.setAttribute('fill', song.color); r.txt.textContent = song.code;
+    const y = SLOT_Y(r.k);
+    await carriage(y, Math.PI / 2, vMs(J.cy, y));
+    await carriage(y, Math.PI, 450);
+    await grip(true);
+    J.held = r; drawCarriage();
+    await carriage(y - 4, Math.PI, 160);
+    await carriage(y - 4, 0, 1100);
+    await carriage(PLAT_Y, 0, vMs(y, PLAT_Y), E.out);
+    sfx.thunk();
+    await grip(false);
+    J.held = null; platG.appendChild(r.g); setPos(r, PLAT_X, PLAT_Y); J.cur = r;
+    carriage(PARK_Y, Math.PI / 2, 800);
+    spinTo(270, 1400);
+    await liftTo(1, 200);
+    await toneTo(TONE.play, 850);
+    await liftTo(0, 350);
+    sfx.crackle(4);
+    this.setPlaying(true);
+  },
+  setPlaying(on) {
+    $('#jb').classList.toggle('playing', on);
+    tween(800, t => $('#mGlow').setAttribute('opacity', on ? .55 * t : .55 * (1 - t)));
+    on ? notes.start() : notes.stop();
+  },
+  async power() {
+    const off = $('#bandOff'), glow = $('#bandGlow');
+    for (const [o, ms] of [[.3, 90], [1, 120], [.1, 80], [1, 200], [0, 500]]) {
+      const o0 = +off.style.opacity;
+      await tween(ms, t => { const v = o0 + (o - o0) * t; off.style.opacity = v; glow.style.opacity = .6 * (1 - v); }, E.lin);
+    }
+  },
+};
+
+/* ---------- floating notes (rise from the top of the window) ---------- */
+const noteBox = $('#noteBox');
+const notes = {
+  timer: null,
+  start() { this.stop(); this.spawn(); this.timer = setInterval(() => this.spawn(), 1400); },
+  stop() { clearInterval(this.timer); this.timer = null; },
+  spawn() {
+    const n = document.createElement('div');
+    n.className = 'note';
+    n.textContent = ['♪', '♫', '♩', '♬'][Math.random() * 4 | 0];
+    n.style.left = rand(880, 1010) + 'px'; n.style.top = '110px';
+    n.style.color = ['#ffd27a', '#ff6b8b', '#7fe7ff', '#fff3e0'][Math.random() * 4 | 0];
+    noteBox.appendChild(n);
+    const dx = rand(-500, 500);
+    n.animate([
+      { transform: 'translate(0,0) scale(.5) rotate(0deg)', opacity: 0 },
+      { opacity: 1, offset: .2 },
+      { transform: `translate(${dx}px,-${rand(140, 220)}px) scale(1.1) rotate(${dx / 10}deg)`, opacity: 0 },
+    ], { duration: rand(3500, 5000), easing: 'cubic-bezier(.2,.6,.4,1)' }).onfinish = () => n.remove();
+  },
+};
+
+/* ---------- now-playing strip ---------- */
+const strip = {
+  el: $('#strip .card'), shown: false,
+  async out() {
+    if (!this.shown) return;
+    this.shown = false;
+    await this.el.animate([{ transform: 'none', opacity: 1 }, { transform: 'translateY(60px) rotateX(75deg)', opacity: 0 }],
+      { duration: 380, easing: 'ease-in', fill: 'forwards' }).finished;
+  },
+  async show(d) {
+    const c = this.el;
+    c.querySelector('.t1').textContent = d.titel;
+    c.querySelectorAll('.code').forEach(e => e.textContent = d.code || '★');
+    c.querySelector('.role').textContent = d.role || '';
+    c.querySelector('.role').style.display = d.role ? '' : 'none';
+    c.querySelector('.who').textContent = d.who || '';
+    const t1 = c.querySelector('.t1'), top = c.querySelector('.top');
+    let fs = 104; t1.style.fontSize = fs + 'px';
+    while (t1.scrollWidth > top.clientWidth - 300 && fs > 50) { fs -= 2; t1.style.fontSize = fs + 'px'; }
+    const who = c.querySelector('.who'); let fw = 44; who.style.fontSize = fw + 'px';
+    while (who.scrollWidth > 1150 && fw > 24) { fw -= 2; who.style.fontSize = fw + 'px'; }
+    this.shown = true;
+    await c.animate([
+      { transform: 'translateY(160px) rotateX(-70deg)', opacity: 0 },
+      { opacity: 1, offset: .35 },
+      { transform: 'none', opacity: 1 },
+    ], { duration: 950, easing: 'cubic-bezier(.2,1.25,.35,1)', fill: 'forwards' }).finished;
+    c.querySelector('.shine').animate([{ left: '-260px' }, { left: '1600px' }], { duration: 1100, easing: 'ease-in-out' });
+  },
+};
+const songStrip = (s, role) => ({ titel: s.titel, code: s.code, role: role || (s.chor ? 'Chor' : 'Solo'), who: s.chor || s.solist });
+
+/* ---------- text overlay ---------- */
+function showOverlay(s) {
+  const big = $('#overlay .big');
+  big.textContent = s.titel;
+  $('#overlay .sub').textContent = s.text || '';
+  big.classList.remove('on'); void big.offsetWidth; big.classList.add('on');
+}
+
+/* ---------- confetti ---------- */
+function confetti() {
+  const cols = ['#ffc65a', '#E30A14', '#4fe3ff', '#ff4f8b', '#fff3e0', '#2fbf71'];
+  for (let i = 0; i < 120; i++) {
+    const p = document.createElement('div');
+    p.className = 'confetti';
+    const kind = Math.random();
+    if (kind < .25) { p.textContent = ['♪', '♫'][i % 2]; p.style.cssText += `font-size:${rand(34, 56)}px;color:${cols[i % 6]};text-shadow:0 0 10px currentColor;font-family:'Segoe UI Symbol'`; }
+    else if (kind < .4) { const s = rand(26, 40); p.style.cssText += `width:${s}px;height:${s}px;border-radius:50%;background:radial-gradient(circle,${cols[i % 6]} 0 28%,#111 30% 100%);box-shadow:0 0 0 1px #333`; }
+    else { p.style.cssText += `width:${rand(12, 18)}px;height:${rand(20, 30)}px;background:${cols[i % 6]};border-radius:2px`; }
+    p.style.left = rand(0, 1920) + 'px';
+    stage.appendChild(p);
+    const dx = rand(-200, 200), rot = rand(-720, 720);
+    p.animate([{ transform: 'translate(0,0) rotate(0)' }, { transform: `translate(${dx}px,1200px) rotate(${rot}deg)` }],
+      { duration: rand(3000, 5500), delay: rand(0, 900), easing: 'cubic-bezier(.3,.1,.6,1)', fill: 'backwards' }).onfinish = () => p.remove();
+  }
+}
+
+/* ---------- voting: ready → running → done → (click) winner plays ---------- */
+const vote = {
+  el: $('#vote'), state: 'idle', cfg: null, rows: [], winner: null,
+  prepare(s) {
+    this.cfg = s; this.state = 'ready';
+    this.el.className = 'ready';
+    this.el.querySelector('.vtitle').textContent = s.titel || 'Publikums-Voting';
+    this.el.querySelector('.vq').textContent = s.frage || '';
+    this.el.querySelector('.vs').textContent = 'Jetzt abstimmen!';
+    this.el.querySelector('.vcount').textContent = '';
+    const box = this.el.querySelector('.vrows'); box.innerHTML = '';
+    this.rows = s.ergebnis.map((e, i) => {
+      const song = SONGS.find(x => x.titel === e.titel) || {};
+      const row = document.createElement('div');
+      row.className = 'vrow';
+      row.style.setProperty('--c', song.color || LABEL_COLORS[i % 8]);
+      row.innerHTML = `<div class="vcode"></div><div class="vname"><div class="vt"></div><div class="vc"></div></div>
+        <div class="vbar"><div class="vfill"><span class="vpct">0 %</span></div></div>`;
+      row.querySelector('.vcode').textContent = song.code || i + 1;
+      row.querySelector('.vt').textContent = e.titel;
+      row.querySelector('.vc').textContent = song.chor || song.solist || '';
+      box.appendChild(row);
+      return { row, fill: row.querySelector('.vfill'), pct: row.querySelector('.vpct'), fin: e.prozent, song,
+               early: rand(.4, 1.6), ph: rand(0, 6.28), fr: rand(5, 11) };
+    });
+    box.style.gap = (this.rows.length > 6 ? 6 : 18) + 'px';
+  },
+  async run() {
+    this.state = 'running'; this.el.className = 'running';
+    this.el.querySelector('.vs').textContent = 'Abstimmung läuft …';
+    const D = (this.cfg.dauer || 10) * 1000 * TEMPO, total = this.cfg.stimmen || 0;
+    const max = Math.max(...this.rows.map(r => r.fin)), mean = 100 / this.rows.length;
+    const scale = v => Math.min(100, v / (max * 1.3) * 100);
+    const sstep = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
+    await tween(D, t => {
+      const grow = Math.min(1, t / .18), settle = sstep(.35, .92, t);
+      let lead = null, lv = -1;
+      for (const r of this.rows) {
+        const early = r.early * mean, noise = Math.sin(t * r.fr * 6 + r.ph) * 4 * (1 - settle);
+        let v = (early + (r.fin - early) * settle) * grow + noise * grow;
+        if (t >= 1) v = r.fin;
+        v = Math.max(0, v);
+        r.fill.style.width = scale(v) + '%';
+        r.pct.textContent = Math.round(v) + ' %';
+        if (v > lv) { lv = v; lead = r; }
+      }
+      this.rows.forEach(r => r.row.classList.toggle('lead', r === lead));
+      if (total) this.el.querySelector('.vcount').textContent = Math.round(total * E.out(t)).toLocaleString('de-DE') + ' Stimmen';
+    }, E.lin);
+    this.state = 'done'; this.el.className = 'done';
+    this.el.querySelector('.vs').textContent = 'Abstimmung beendet';
+    const win = this.rows.reduce((a, b) => b.fin > a.fin ? b : a);
+    this.winner = win.song && win.song.code ? win.song : null;
+    this.rows.forEach(r => { r.row.classList.remove('lead'); r.row.classList.add(r === win ? 'win' : 'lose'); });
+    sfx.fanfare(); confetti();
+  },
+  async playWinner() {
+    this.state = 'played';
+    setMode('main');
+    if (!this.winner) return;
+    await strip.out();
+    await Promise.all([jb.select(this.winner), jb.unload()]);
+    await jb.load(this.winner);
+    await strip.show(songStrip(this.winner, '★ Sieger'));
+    confetti();
+  },
+};
+
+/* =====================================================================
+   SHOW CONTROLLER
+   ===================================================================== */
+let idx = -1, busy = false, pending = 0, powered = false;
+function setMode(m) { stage.className = 'mode-' + m; }
+
+async function powerOn() {
+  powered = true;
+  $('#black').classList.add('gone');
+  await wait(900);
+  await jb.power();
+  await wait(300);
+}
+
+async function enter(s) {
+  if (!powered) await powerOn();
+  if (s.typ === 'lied') {
+    setMode('main');
+    await strip.out();
+    await Promise.all([jb.select(s), jb.unload()]);
+    await jb.load(s);
+    await strip.show(songStrip(s));
+  } else if (s.typ === 'intro') {
+    setMode('main');
+    markRack(null);
+    await strip.out();
+    await jb.unload();
+    await strip.show({ titel: s.titel, who: s.untertitel, code: '★' });
+  } else if (s.typ === 'text') {
+    setMode('text');
+    showOverlay(s);
+    await jb.unload();
+  } else if (s.typ === 'abstimmung') {
+    vote.prepare(s);
+    setMode('vote');
+    await jb.unload();
+  }
+}
+
+async function run(fn) {
+  busy = true; HURRY = false;
+  try { await fn(); } catch (e) { console.error(e); }
+  busy = false; HURRY = false;
+  if (pending) { const d = pending; pending = 0; nav(d); }
+}
+function nav(dir) {
+  sfx.init();
+  if (busy) { HURRY = true; pending = dir; return; }
+  const cur = PROGRAMM[idx];
+  if (dir > 0 && cur && cur.typ === 'abstimmung') {
+    if (vote.state === 'ready') return run(() => vote.run());
+    if (vote.state === 'done') return run(() => vote.playWinner());
+  }
+  const n = idx + dir;
+  if (n < 0 || n >= PROGRAMM.length) return;
+  idx = n;
+  run(() => enter(PROGRAMM[n]));
+}
+
+function toast(msg) { const t = $('#toast'); t.textContent = msg; t.style.opacity = 1; clearTimeout(t._h); t._h = setTimeout(() => t.style.opacity = 0, 1400); }
+addEventListener('keydown', e => {
+  const k = e.key;
+  if (['ArrowRight', ' ', 'PageDown', 'Enter', 'ArrowDown'].includes(k)) { e.preventDefault(); nav(1); }
+  else if (['ArrowLeft', 'PageUp', 'Backspace', 'ArrowUp'].includes(k)) { e.preventDefault(); nav(-1); }
+  else if (k === 'f' || k === 'F') { document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen(); }
+  else if (k === 'm' || k === 'M') { sfx.on = !sfx.on; toast(sfx.on ? 'Ton an' : 'Ton aus'); }
+  else if (k === 'h' || k === 'H') { const h = $('#help'); h.style.display = h.style.display === 'block' ? 'none' : 'block'; }
+  else if (k === 'Home') location.reload();
+});
+// Klick/Tippen: linkes Viertel = zurück, sonst weiter · Wischen links/rechts · Handy: erster Tipp → Vollbild (Android)
+const isTouch = matchMedia('(pointer: coarse)').matches;
+let swiped = false, tx = 0, ty = 0;
+addEventListener('touchstart', e => { tx = e.touches[0].clientX; ty = e.touches[0].clientY; swiped = false; }, { passive: true });
+addEventListener('touchend', e => {
+  const dx = e.changedTouches[0].clientX - tx, dy = e.changedTouches[0].clientY - ty;
+  if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy)) { swiped = true; nav(dx < 0 ? 1 : -1); }
+});
+addEventListener('click', e => {
+  if (swiped) { swiped = false; return; }
+  if (isTouch && !document.fullscreenElement && document.documentElement.requestFullscreen)
+    document.documentElement.requestFullscreen().catch(() => {});
+  nav(e.clientX < innerWidth * .25 ? -1 : 1);
+});
+stage.addEventListener('contextmenu', e => { e.preventDefault(); nav(-1); });
+
+/* ---------- snow (visible in the corners around the arch) ---------- */
+(() => {
+  const c = $('#snow'), x = c.getContext('2d');
+  const fl = Array.from({ length: 110 }, () => ({ x: rand(0, 1920), y: rand(0, 1080), r: rand(.6, 2.6), v: rand(18, 55), w: rand(0, 6.28), a: rand(.25, .75) }));
+  let last = performance.now();
+  (function f(now) {
+    const dt = Math.min(.05, (now - last) / 1000); last = now;
+    x.clearRect(0, 0, 1920, 1080);
+    for (const p of fl) {
+      p.y += p.v * dt; p.w += dt; p.x += Math.sin(p.w) * 12 * dt;
+      if (p.y > 1090) { p.y = -10; p.x = rand(0, 1920); }
+      x.globalAlpha = p.a; x.beginPath(); x.arc(p.x, p.y, p.r, 0, 6.283); x.fillStyle = '#fff'; x.fill();
+    }
+    requestAnimationFrame(f);
+  })(last);
+})();
+$('#bandOff').style.opacity = 1;
+</script>
+</body>
+</html>

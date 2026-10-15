@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Jukebox – Winterveranstaltung</title>
+<style>
+  :root{--bg:#0b0e1d;--fg:#f5ecdc;--red:#E30A14;--gold:#ffc65a}
+  *{box-sizing:border-box;margin:0}
+  body{min-height:100vh;display:grid;place-items:center;padding:24px 16px;background:radial-gradient(ellipse at 50% 20%,#1d2342,var(--bg) 60%,#040409);
+    color:var(--fg);font-family:'Segoe UI',system-ui,sans-serif;text-align:center}
+  h1{font-size:clamp(28px,6vw,48px);margin-bottom:8px}
+  p{opacity:.75;margin-bottom:28px}
+  .btns{display:flex;flex-wrap:wrap;gap:16px;justify-content:center}
+  a{display:block;min-width:240px;padding:22px 28px;border-radius:16px;text-decoration:none;color:#fff;font-size:22px;font-weight:700;
+    background:linear-gradient(180deg,#f0141f,#b8050d);box-shadow:0 8px 24px rgba(227,10,20,.35)}
+  a small{display:block;font-size:14px;font-weight:400;opacity:.85;margin-top:4px}
+  a.gold{background:linear-gradient(180deg,#ffd26b,#c98a16);color:#2a1810}
+  .hint{margin-top:28px;font-size:14px;opacity:.6;line-height:1.6}
+</style>
+</head>
+<body>
+<main>
+  <h1>Jukebox – Winterveranstaltung</h1>
+  <p>Gesangverein 1871 Altenheim e.V. · Entwurf der Beamer-Präsentation</p>
+  <div class="btns">
+    <a class="gold" href="Jukebox3D.html">Jukebox 3D<small>mit Kamerafahrten (three.js)</small></a>
+    <a href="Jukebox.html">Jukebox 2D<small>leichtere Variante</small></a>
+  </div>
+  <div class="hint">Am Handy quer halten · Weiter: Tippen oder Wischen · Zurück: linker Rand<br>Am Laptop: Leertaste / Pfeiltasten · F = Vollbild</div>
+</main>
+</body>
+</html>
